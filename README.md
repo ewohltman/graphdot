@@ -7,7 +7,7 @@
 ## Installation
 Install `graphdot` using go get:
 
-`go get github.com/ewohltman/graphdot`
+`go get -u github.com/ewohltman/graphdot`
 
 ## Usage
 Run `graphdot` in the directory of any project using Go modules with a `go.mod`

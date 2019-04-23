@@ -14,9 +14,16 @@ Run `graphdot` in the directory of any project using Go modules with a `go.mod`
 file to print out a dependency graph in [Graphviz](https://www.graphviz.org/)
 DOT format.
 
-The output can be piped directly into `dot` to generate an image file:
+The output can be piped directly into `dot` to generate a
+[PNG](https://en.wikipedia.org/wiki/Portable_Network_Graphics) image file:
 
 `graphdot | dot -T png -o dependency_graph.png`
+
+For large graphs with many nodes of dependencies, you may want to generate an
+[SVG](https://en.wikipedia.org/wiki/Scalable_Vector_Graphics) file to allow you
+to zoom in with high-fidelity and save disk space instead:
+
+`graphdot | dot -Gdpi=0 -T svg -o dependency_graph.svg`
 
 ## Contributing
 

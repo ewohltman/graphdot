@@ -59,6 +59,8 @@ func dotFormat(hashes packageHashes, dependsUpon dependencyMap) *bytes.Buffer {
 	buf := bytes.NewBuffer([]byte{})
 
 	buf.WriteString("digraph {\n")
+	buf.WriteString("    ratio=\".5\";\n")
+	buf.WriteString("    nodesep=.25;\n")
 	buf.WriteString("    node [shape=box];\n")
 
 	for libraryDetails, hash := range hashes {
@@ -126,7 +128,15 @@ func main() {
 		log.Fatalf("Error setting environment variable GO111MODULE to on: %s\n", err)
 	}
 
-	cmdOutput, err := exec.
+	err = exec.
+		Command("go", "mod", "download").
+		Run()
+	if err != nil {
+		log.SetOutput(os.Stderr)
+		log.Fatalf("Error running go mod download: %s\n", err)
+	}
+
+	cmdGraph, err := exec.
 		Command("go", "mod", "graph").
 		Output()
 	if err != nil {
@@ -134,7 +144,7 @@ func main() {
 		log.Fatalf("Error running go mod graph: %s\n", err)
 	}
 
-	if len(cmdOutput) == 0 {
+	if len(cmdGraph) == 0 {
 		log.Println("No module dependencies to graph")
 		os.Exit(0)
 	}
@@ -143,7 +153,7 @@ func main() {
 		dotFormat(
 			mapDependencies(
 				strings.Split(
-					string(cmdOutput), "\n",
+					string(cmdGraph), "\n",
 				),
 			),
 		).String(),

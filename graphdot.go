@@ -59,7 +59,10 @@ func dotFormat(hashes packageHashes, dependsUpon dependencyMap) *bytes.Buffer {
 	buf := bytes.NewBuffer([]byte{})
 
 	buf.WriteString("digraph {\n")
-	buf.WriteString("    ratio=\".5\";\n")
+	buf.WriteString("    size=\"11,6!\";\n")
+	buf.WriteString("    pad=.25;\n")
+	buf.WriteString("    ratio=\"fill\";\n")
+	buf.WriteString("    dpi=360;\n")
 	buf.WriteString("    nodesep=.25;\n")
 	buf.WriteString("    node [shape=box];\n")
 

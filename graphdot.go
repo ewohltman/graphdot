@@ -120,12 +120,23 @@ func main() {
 		log.Fatalf("Error finding go.mod file: %s\n", err)
 	}
 
+	err = os.Setenv("GO111MODULE", "on")
+	if err != nil {
+		log.SetOutput(os.Stderr)
+		log.Fatalf("Error setting environment variable GO111MODULE to on: %s\n", err)
+	}
+
 	cmdOutput, err := exec.
 		Command("go", "mod", "graph").
 		Output()
 	if err != nil {
 		log.SetOutput(os.Stderr)
 		log.Fatalf("Error running go mod graph: %s\n", err)
+	}
+
+	if len(cmdOutput) == 0 {
+		log.Println("No module dependencies to graph")
+		os.Exit(0)
 	}
 
 	log.Println(

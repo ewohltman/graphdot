@@ -1,21 +1,17 @@
 package main
 
 import (
-	"bytes"
-	"fmt"
-	"hash/fnv"
+	"go/build"
 	"log"
 	"os"
-	"os/exec"
-	"strings"
 )
 
-type (
+/*type (
 	dependencyMap map[string][]string
 	packageHashes map[string]uint32
-)
+)*/
 
-func mapDependencies(dependencies []string) (packageHashes, dependencyMap) {
+/*func mapDependencies(dependencies []string) (packageHashes, dependencyMap) {
 	hashes := make(packageHashes)
 	dependsUpon := make(dependencyMap)
 
@@ -41,9 +37,9 @@ func mapDependencies(dependencies []string) (packageHashes, dependencyMap) {
 	}
 
 	return hashes, dependsUpon
-}
+}*/
 
-func packageHash(dependency string) uint32 {
+/*func packageHash(dependency string) uint32 {
 	hash := fnv.New32a()
 
 	_, err := hash.Write([]byte(dependency))
@@ -53,9 +49,9 @@ func packageHash(dependency string) uint32 {
 	}
 
 	return hash.Sum32()
-}
+}*/
 
-func dotFormat(hashes packageHashes, dependsUpon dependencyMap) *bytes.Buffer {
+/*func dotFormat(hashes packageHashes, dependsUpon dependencyMap) *bytes.Buffer {
 	buf := bytes.NewBuffer([]byte{})
 
 	buf.WriteString("digraph {\n")
@@ -113,52 +109,86 @@ func dotFormat(hashes packageHashes, dependsUpon dependencyMap) *bytes.Buffer {
 	buf.WriteString("}")
 
 	return buf
+}*/
+
+type Node struct {
+	Name         string
+	GoRoot       bool
+	Dependencies []Node
+}
+
+func (node *Node) findImports(ctx *build.Context) error {
+	pkg, err := ctx.Import(node.Name, ".", build.ImportComment)
+	if err != nil {
+		return err
+	}
+
+	if pkg.Goroot {
+		node.GoRoot = true
+		return nil
+	}
+
+	if pkg.Imports == nil {
+		return nil
+	}
+
+	for _, name := range pkg.Imports {
+		dependencyNode := Node{
+			Name: name,
+		}
+
+		err = dependencyNode.findImports(ctx)
+		if err != nil {
+			return err
+		}
+
+		if !dependencyNode.GoRoot {
+			node.Dependencies = append(node.Dependencies, dependencyNode)
+		}
+	}
+
+	return nil
 }
 
 func main() {
 	log.SetFlags(0)
 	log.SetOutput(os.Stdout)
 
-	_, err := os.Stat("go.mod")
-	if err != nil {
-		log.SetOutput(os.Stderr)
-		log.Fatalf("Error finding go.mod file: %s\n", err)
-	}
-
-	err = os.Setenv("GO111MODULE", "on")
+	/*err := os.Setenv("GO111MODULE", "on")
 	if err != nil {
 		log.SetOutput(os.Stderr)
 		log.Fatalf("Error setting environment variable GO111MODULE to on: %s\n", err)
-	}
+	}*/
 
-	err = exec.
-		Command("go", "mod", "download").
-		Run()
+	ctx := &build.Default
+
+	root, err := ctx.ImportDir(".", build.ImportComment)
 	if err != nil {
 		log.SetOutput(os.Stderr)
-		log.Fatalf("Error running go mod download: %s\n", err)
+		log.Fatalf("Error determining root package: %s\n", err)
 	}
 
-	cmdGraph, err := exec.
-		Command("go", "mod", "graph").
-		Output()
-	if err != nil {
-		log.SetOutput(os.Stderr)
-		log.Fatalf("Error running go mod graph: %s\n", err)
+	rootNode := Node{
+		Name: root.Name,
 	}
 
-	if len(cmdGraph) == 0 {
-		log.Println("No module dependencies to graph")
-		os.Exit(0)
+	for _, imprt := range root.Imports {
+		dependencyNode := Node{
+			Name: imprt,
+		}
+
+		err = dependencyNode.findImports(ctx)
+		if err != nil {
+			log.SetOutput(os.Stderr)
+			log.Fatalf("Error determining dependency package: %s\n", err)
+		}
+
+		if !dependencyNode.GoRoot {
+			rootNode.Dependencies = append(rootNode.Dependencies, dependencyNode)
+		}
 	}
 
-	log.Println(
-		dotFormat(
-			mapDependencies(
-				strings.Split(
-					string(cmdGraph), "\n",
-				),
-			),
-		).String(),
-	)
+	for _, depen := range rootNode.Dependencies {
+		log.Printf("%+v\n", depen)
+	}
 }

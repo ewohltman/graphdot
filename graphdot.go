@@ -1,124 +1,24 @@
 package main
 
 import (
+	"bytes"
+	"fmt"
 	"go/build"
+	"hash"
+	"hash/fnv"
 	"log"
 	"os"
 )
 
-/*type (
-	dependencyMap map[string][]string
-	packageHashes map[string]uint32
-)*/
-
-/*func mapDependencies(dependencies []string) (packageHashes, dependencyMap) {
-	hashes := make(packageHashes)
-	dependsUpon := make(dependencyMap)
-
-	for _, dependency := range dependencies {
-		if dependency == "" {
-			continue
-		}
-
-		relationship := strings.Split(dependency, " ")
-
-		if _, found := hashes[relationship[0]]; !found {
-			hashes[relationship[0]] = packageHash(relationship[0])
-		}
-
-		if _, found := hashes[relationship[1]]; !found {
-			hashes[relationship[1]] = packageHash(relationship[1])
-		}
-
-		dependsUpon[relationship[0]] = append(
-			dependsUpon[relationship[0]],
-			relationship[1],
-		)
-	}
-
-	return hashes, dependsUpon
-}*/
-
-/*func packageHash(dependency string) uint32 {
-	hash := fnv.New32a()
-
-	_, err := hash.Write([]byte(dependency))
-	if err != nil {
-		log.SetOutput(os.Stderr)
-		log.Fatalf("Error hashing package: %s\n", err)
-	}
-
-	return hash.Sum32()
-}*/
-
-/*func dotFormat(hashes packageHashes, dependsUpon dependencyMap) *bytes.Buffer {
-	buf := bytes.NewBuffer([]byte{})
-
-	buf.WriteString("digraph {\n")
-	buf.WriteString("    size=\"11,6!\";\n")
-	buf.WriteString("    pad=.25;\n")
-	buf.WriteString("    ratio=\"fill\";\n")
-	buf.WriteString("    dpi=360;\n")
-	buf.WriteString("    nodesep=.25;\n")
-	buf.WriteString("    node [shape=box];\n")
-
-	for libraryDetails, hash := range hashes {
-		library := strings.Split(libraryDetails, "@")
-		libraryName := ""
-		libraryVersion := ""
-
-		if len(library) < 2 {
-			libraryName = library[0]
-		} else {
-			libraryName = library[0]
-			libraryVersion = library[1]
-		}
-
-		nodeLabel := ""
-
-		if libraryVersion != "" {
-			nodeLabel = fmt.Sprintf(
-				"    %v [label=\"%s\\n%s\"];\n",
-				hash,
-				libraryName,
-				libraryVersion,
-			)
-		} else {
-			nodeLabel = fmt.Sprintf(
-				"    %v [label=\"%s\"];\n",
-				hash,
-				libraryName,
-			)
-		}
-
-		buf.WriteString(nodeLabel)
-	}
-
-	for child, parents := range dependsUpon {
-		for _, parent := range parents {
-			buf.WriteString(
-				fmt.Sprintf(
-					"    %v -> %v;\n",
-					hashes[child],
-					hashes[parent],
-				),
-			)
-		}
-	}
-
-	buf.WriteString("}")
-
-	return buf
-}*/
-
 type Node struct {
-	Name         string
-	GoRoot       bool
-	Dependencies []Node
+	Name         string `json:"name"`
+	Hash         uint32 `json:"hash"`
+	GoRoot       bool   `json:"-"`
+	Dependencies []Node `json:"dependencies"`
 }
 
-func (node *Node) findImports(ctx *build.Context) error {
-	pkg, err := ctx.Import(node.Name, ".", build.ImportComment)
+func (node *Node) findDeps(ctx *build.Context, pwd string, hashAlgo hash.Hash32) error {
+	pkg, err := ctx.Import(node.Name, pwd, build.ImportComment)
 	if err != nil {
 		return err
 	}
@@ -135,9 +35,10 @@ func (node *Node) findImports(ctx *build.Context) error {
 	for _, name := range pkg.Imports {
 		dependencyNode := Node{
 			Name: name,
+			Hash: hashName(hashAlgo, name),
 		}
 
-		err = dependencyNode.findImports(ctx)
+		err = dependencyNode.findDeps(ctx, pwd, hashAlgo)
 		if err != nil {
 			return err
 		}
@@ -150,45 +51,121 @@ func (node *Node) findImports(ctx *build.Context) error {
 	return nil
 }
 
+func (node *Node) mapHashes(nameHashes map[string]uint32) {
+	nameHashes[node.Name] = node.Hash
+
+	if node.Dependencies == nil {
+		return
+	}
+
+	for _, dep := range node.Dependencies {
+		dep.mapHashes(nameHashes)
+	}
+}
+
+func (node *Node) walkDeps(buf *bytes.Buffer) {
+	if node.Dependencies == nil {
+		return
+	}
+
+	for _, dep := range node.Dependencies {
+		buf.WriteString(
+			fmt.Sprintf(
+				"    %d -> %d;\n",
+				node.Hash,
+				dep.Hash,
+			),
+		)
+
+		dep.walkDeps(buf)
+	}
+
+}
+
+func hashName(hashAlgo hash.Hash32, name string) uint32 {
+	_, err := hashAlgo.Write([]byte(name))
+	if err != nil {
+		log.SetOutput(os.Stderr)
+		log.Fatalf("Error hashing package: %s\n", err)
+	}
+
+	return hashAlgo.Sum32()
+}
+
+func dotFormat(root Node) *bytes.Buffer {
+	nameHashes := make(map[string]uint32)
+	root.mapHashes(nameHashes)
+
+	buf := bytes.NewBuffer([]byte{})
+
+	buf.WriteString("digraph {\n")
+	// buf.WriteString("    size=\"11,6!\";\n")
+	buf.WriteString("    pad=.25;\n")
+	buf.WriteString("    ratio=\"fill\";\n")
+	buf.WriteString("    dpi=360;\n")
+	buf.WriteString("    nodesep=.25;\n")
+	buf.WriteString("    node [shape=box];\n")
+
+	for name, hashed := range nameHashes {
+		buf.WriteString(
+			fmt.Sprintf(
+				"    %d [label=\"%s\"];\n",
+				hashed,
+				name,
+			),
+		)
+	}
+
+	root.walkDeps(buf)
+
+	buf.WriteString("}\n")
+
+	return buf
+}
+
 func main() {
 	log.SetFlags(0)
 	log.SetOutput(os.Stdout)
 
-	/*err := os.Setenv("GO111MODULE", "on")
+	pwd, err := os.Getwd()
 	if err != nil {
 		log.SetOutput(os.Stderr)
-		log.Fatalf("Error setting environment variable GO111MODULE to on: %s\n", err)
-	}*/
+		log.Fatalf("Error determining working directory: %s\n", err)
+	}
 
 	ctx := &build.Default
 
-	root, err := ctx.ImportDir(".", build.ImportComment)
+	pkgMain, err := ctx.ImportDir(pwd, build.ImportComment)
 	if err != nil {
 		log.SetOutput(os.Stderr)
-		log.Fatalf("Error determining root package: %s\n", err)
+		log.Fatalf("Error determining main package: %s\n", err)
 	}
 
-	rootNode := Node{
-		Name: root.Name,
+	hashAlgo := fnv.New32a()
+
+	root := Node{
+		Name: pkgMain.Name,
+		Hash: hashName(hashAlgo, pkgMain.Name),
 	}
 
-	for _, imprt := range root.Imports {
+	for _, imprt := range pkgMain.Imports {
 		dependencyNode := Node{
 			Name: imprt,
+			Hash: hashName(hashAlgo, imprt),
 		}
 
-		err = dependencyNode.findImports(ctx)
+		err = dependencyNode.findDeps(ctx, pwd, hashAlgo)
 		if err != nil {
 			log.SetOutput(os.Stderr)
 			log.Fatalf("Error determining dependency package: %s\n", err)
 		}
 
 		if !dependencyNode.GoRoot {
-			rootNode.Dependencies = append(rootNode.Dependencies, dependencyNode)
+			root.Dependencies = append(root.Dependencies, dependencyNode)
 		}
 	}
 
-	for _, depen := range rootNode.Dependencies {
-		log.Printf("%+v\n", depen)
-	}
+	buf := dotFormat(root)
+
+	log.Printf("%s", buf.String())
 }

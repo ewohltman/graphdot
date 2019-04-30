@@ -2,64 +2,50 @@ package main
 
 import (
 	"bytes"
+	"crypto/md5"
 	"fmt"
 	"go/build"
-	"hash"
-	"hash/fnv"
 	"log"
 	"os"
 )
 
 type Node struct {
-	Name         string `json:"name"`
-	Hash         uint32 `json:"hash"`
-	GoRoot       bool   `json:"-"`
-	Dependencies []Node `json:"dependencies"`
+	Name         string   `json:"name"`
+	Hash         [16]byte `json:"hash"`
+	GoRoot       bool     `json:"-"`
+	Dependencies []Node   `json:"dependencies"`
 }
 
-func (node *Node) findDeps(ctx *build.Context, pwd string, hashAlgo hash.Hash32) error {
+var pkgHashes = make(map[string][16]byte)
+
+func (node *Node) findDeps(ctx *build.Context, pwd string) {
 	pkg, err := ctx.Import(node.Name, pwd, build.ImportComment)
 	if err != nil {
-		return err
+		log.SetOutput(os.Stderr)
+		log.Printf("Error determining dependency package: %s", err)
 	}
 
 	if pkg.Goroot {
 		node.GoRoot = true
-		return nil
+		return
 	}
 
 	if pkg.Imports == nil {
-		return nil
+		return
 	}
 
 	for _, name := range pkg.Imports {
 		dependencyNode := Node{
 			Name: name,
-			Hash: hashName(hashAlgo, name),
+			Hash: md5.Sum([]byte(name)),
 		}
 
-		err = dependencyNode.findDeps(ctx, pwd, hashAlgo)
-		if err != nil {
-			return err
-		}
+		dependencyNode.findDeps(ctx, pwd)
 
 		if !dependencyNode.GoRoot {
+			pkgHashes[dependencyNode.Name] = dependencyNode.Hash
 			node.Dependencies = append(node.Dependencies, dependencyNode)
 		}
-	}
-
-	return nil
-}
-
-func (node *Node) mapHashes(nameHashes map[string]uint32) {
-	nameHashes[node.Name] = node.Hash
-
-	if node.Dependencies == nil {
-		return
-	}
-
-	for _, dep := range node.Dependencies {
-		dep.mapHashes(nameHashes)
 	}
 }
 
@@ -68,10 +54,18 @@ func (node *Node) walkDeps(buf *bytes.Buffer) {
 		return
 	}
 
+	if node.GoRoot {
+		return
+	}
+
 	for _, dep := range node.Dependencies {
+		if dep.GoRoot {
+			continue
+		}
+
 		buf.WriteString(
 			fmt.Sprintf(
-				"    %d -> %d;\n",
+				"    \"%x\" -> \"%x\";\n",
 				node.Hash,
 				dep.Hash,
 			),
@@ -79,23 +73,9 @@ func (node *Node) walkDeps(buf *bytes.Buffer) {
 
 		dep.walkDeps(buf)
 	}
-
-}
-
-func hashName(hashAlgo hash.Hash32, name string) uint32 {
-	_, err := hashAlgo.Write([]byte(name))
-	if err != nil {
-		log.SetOutput(os.Stderr)
-		log.Fatalf("Error hashing package: %s\n", err)
-	}
-
-	return hashAlgo.Sum32()
 }
 
 func dotFormat(root Node) *bytes.Buffer {
-	nameHashes := make(map[string]uint32)
-	root.mapHashes(nameHashes)
-
 	buf := bytes.NewBuffer([]byte{})
 
 	buf.WriteString("digraph {\n")
@@ -106,10 +86,10 @@ func dotFormat(root Node) *bytes.Buffer {
 	buf.WriteString("    nodesep=.25;\n")
 	buf.WriteString("    node [shape=box];\n")
 
-	for name, hashed := range nameHashes {
+	for name, hashed := range pkgHashes {
 		buf.WriteString(
 			fmt.Sprintf(
-				"    %d [label=\"%s\"];\n",
+				"    \"%x\" [label=\"%s\"];\n",
 				hashed,
 				name,
 			),
@@ -141,26 +121,23 @@ func main() {
 		log.Fatalf("Error determining main package: %s\n", err)
 	}
 
-	hashAlgo := fnv.New32a()
-
 	root := Node{
 		Name: pkgMain.Name,
-		Hash: hashName(hashAlgo, pkgMain.Name),
+		Hash: md5.Sum([]byte(pkgMain.Name)),
 	}
+
+	pkgHashes[root.Name] = root.Hash
 
 	for _, imprt := range pkgMain.Imports {
 		dependencyNode := Node{
 			Name: imprt,
-			Hash: hashName(hashAlgo, imprt),
+			Hash: md5.Sum([]byte(imprt)),
 		}
 
-		err = dependencyNode.findDeps(ctx, pwd, hashAlgo)
-		if err != nil {
-			log.SetOutput(os.Stderr)
-			log.Fatalf("Error determining dependency package: %s\n", err)
-		}
+		dependencyNode.findDeps(ctx, pwd)
 
 		if !dependencyNode.GoRoot {
+			pkgHashes[dependencyNode.Name] = dependencyNode.Hash
 			root.Dependencies = append(root.Dependencies, dependencyNode)
 		}
 	}

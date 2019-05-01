@@ -2,115 +2,109 @@ package main
 
 import (
 	"bytes"
+	"crypto/md5"
 	"fmt"
-	"hash/fnv"
+	"go/build"
 	"log"
 	"os"
-	"os/exec"
-	"strings"
 )
 
-type (
-	dependencyMap map[string][]string
-	packageHashes map[string]uint32
+type Node struct {
+	Name         string   `json:"name"`
+	Hash         [16]byte `json:"hash"`
+	GoRoot       bool     `json:"-"`
+	Dependencies []Node   `json:"dependencies"`
+}
+
+var (
+	pkgHashes          = make(map[string][16]byte)
+	uniqueDependencies = make(map[string]bool)
 )
 
-func mapDependencies(dependencies []string) (packageHashes, dependencyMap) {
-	hashes := make(packageHashes)
-	dependsUpon := make(dependencyMap)
+func (node *Node) findDeps(ctx *build.Context, pwd string) {
+	pkg, err := ctx.Import(node.Name, pwd, build.ImportComment)
+	if err != nil {
+		log.SetOutput(os.Stderr)
+		log.Printf("Error determining dependency package: %s", err)
+	}
 
-	for _, dependency := range dependencies {
-		if dependency == "" {
+	if pkg.Goroot {
+		node.GoRoot = true
+		return
+	}
+
+	if pkg.Imports == nil {
+		return
+	}
+
+	for _, name := range pkg.Imports {
+		dependencyNode := Node{
+			Name: name,
+			Hash: md5.Sum([]byte(name)),
+		}
+
+		dependencyNode.findDeps(ctx, pwd)
+
+		if !dependencyNode.GoRoot {
+			pkgHashes[dependencyNode.Name] = dependencyNode.Hash
+			node.Dependencies = append(node.Dependencies, dependencyNode)
+		}
+	}
+}
+
+func (node *Node) walkDeps() {
+	if node.Dependencies == nil {
+		return
+	}
+
+	if node.GoRoot {
+		return
+	}
+
+	for _, dep := range node.Dependencies {
+		if dep.GoRoot {
 			continue
 		}
 
-		relationship := strings.Split(dependency, " ")
-
-		if _, found := hashes[relationship[0]]; !found {
-			hashes[relationship[0]] = packageHash(relationship[0])
-		}
-
-		if _, found := hashes[relationship[1]]; !found {
-			hashes[relationship[1]] = packageHash(relationship[1])
-		}
-
-		dependsUpon[relationship[0]] = append(
-			dependsUpon[relationship[0]],
-			relationship[1],
+		mapping := fmt.Sprintf(
+			"    \"%x\" -> \"%x\";\n",
+			node.Hash,
+			dep.Hash,
 		)
-	}
 
-	return hashes, dependsUpon
+		uniqueDependencies[mapping] = true
+
+		dep.walkDeps()
+	}
 }
 
-func packageHash(dependency string) uint32 {
-	hash := fnv.New32a()
-
-	_, err := hash.Write([]byte(dependency))
-	if err != nil {
-		log.SetOutput(os.Stderr)
-		log.Fatalf("Error hashing package: %s\n", err)
-	}
-
-	return hash.Sum32()
-}
-
-func dotFormat(hashes packageHashes, dependsUpon dependencyMap) *bytes.Buffer {
+func dotFormat(root Node) *bytes.Buffer {
 	buf := bytes.NewBuffer([]byte{})
 
 	buf.WriteString("digraph {\n")
-	buf.WriteString("    size=\"11,6!\";\n")
 	buf.WriteString("    pad=.25;\n")
 	buf.WriteString("    ratio=\"fill\";\n")
 	buf.WriteString("    dpi=360;\n")
 	buf.WriteString("    nodesep=.25;\n")
 	buf.WriteString("    node [shape=box];\n")
 
-	for libraryDetails, hash := range hashes {
-		library := strings.Split(libraryDetails, "@")
-		libraryName := ""
-		libraryVersion := ""
-
-		if len(library) < 2 {
-			libraryName = library[0]
-		} else {
-			libraryName = library[0]
-			libraryVersion = library[1]
-		}
-
-		nodeLabel := ""
-
-		if libraryVersion != "" {
-			nodeLabel = fmt.Sprintf(
-				"    %v [label=\"%s\\n%s\"];\n",
-				hash,
-				libraryName,
-				libraryVersion,
-			)
-		} else {
-			nodeLabel = fmt.Sprintf(
-				"    %v [label=\"%s\"];\n",
-				hash,
-				libraryName,
-			)
-		}
-
-		buf.WriteString(nodeLabel)
+	for name, hashed := range pkgHashes {
+		buf.WriteString(
+			fmt.Sprintf(
+				"    \"%x\" [label=\"%s\"];\n",
+				hashed,
+				name,
+			),
+		)
 	}
 
-	for child, parents := range dependsUpon {
-		for _, parent := range parents {
-			buf.WriteString(
-				fmt.Sprintf(
-					"    %v -> %v;\n",
-					hashes[child],
-					hashes[parent],
-				),
-			)
-		}
+	root.walkDeps()
+
+	for depMapping := range uniqueDependencies {
+		buf.WriteString(depMapping)
 	}
 
-	buf.WriteString("}")
+	buf.WriteString("}\n")
 
 	return buf
 }
@@ -119,46 +113,42 @@ func main() {
 	log.SetFlags(0)
 	log.SetOutput(os.Stdout)
 
-	_, err := os.Stat("go.mod")
+	pwd, err := os.Getwd()
 	if err != nil {
 		log.SetOutput(os.Stderr)
-		log.Fatalf("Error finding go.mod file: %s\n", err)
+		log.Fatalf("Error determining working directory: %s\n", err)
 	}
 
-	err = os.Setenv("GO111MODULE", "on")
+	ctx := &build.Default
+
+	pkgMain, err := ctx.ImportDir(pwd, build.ImportComment)
 	if err != nil {
 		log.SetOutput(os.Stderr)
-		log.Fatalf("Error setting environment variable GO111MODULE to on: %s\n", err)
+		log.Fatalf("Error determining main package: %s\n", err)
 	}
 
-	err = exec.
-		Command("go", "mod", "download").
-		Run()
-	if err != nil {
-		log.SetOutput(os.Stderr)
-		log.Fatalf("Error running go mod download: %s\n", err)
+	root := Node{
+		Name: pkgMain.Name,
+		Hash: md5.Sum([]byte(pkgMain.Name)),
 	}
 
-	cmdGraph, err := exec.
-		Command("go", "mod", "graph").
-		Output()
-	if err != nil {
-		log.SetOutput(os.Stderr)
-		log.Fatalf("Error running go mod graph: %s\n", err)
+	pkgHashes[root.Name] = root.Hash
+
+	for _, imprt := range pkgMain.Imports {
+		dependencyNode := Node{
+			Name: imprt,
+			Hash: md5.Sum([]byte(imprt)),
+		}
+
+		dependencyNode.findDeps(ctx, pwd)
+
+		if !dependencyNode.GoRoot {
+			pkgHashes[dependencyNode.Name] = dependencyNode.Hash
+			root.Dependencies = append(root.Dependencies, dependencyNode)
+		}
 	}
 
-	if len(cmdGraph) == 0 {
-		log.Println("No module dependencies to graph")
-		os.Exit(0)
-	}
+	buf := dotFormat(root)
 
-	log.Println(
-		dotFormat(
-			mapDependencies(
-				strings.Split(
-					string(cmdGraph), "\n",
-				),
-			),
-		).String(),
-	)
+	log.Printf("%s", buf.String())
 }

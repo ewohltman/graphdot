@@ -16,7 +16,10 @@ type Node struct {
 	Dependencies []Node   `json:"dependencies"`
 }
 
-var pkgHashes = make(map[string][16]byte)
+var (
+	pkgHashes          = make(map[string][16]byte)
+	uniqueDependencies = make(map[string]bool)
+)
 
 func (node *Node) findDeps(ctx *build.Context, pwd string) {
 	pkg, err := ctx.Import(node.Name, pwd, build.ImportComment)
@@ -49,7 +52,7 @@ func (node *Node) findDeps(ctx *build.Context, pwd string) {
 	}
 }
 
-func (node *Node) walkDeps(buf *bytes.Buffer) {
+func (node *Node) walkDeps() {
 	if node.Dependencies == nil {
 		return
 	}
@@ -63,15 +66,15 @@ func (node *Node) walkDeps(buf *bytes.Buffer) {
 			continue
 		}
 
-		buf.WriteString(
-			fmt.Sprintf(
-				"    \"%x\" -> \"%x\";\n",
-				node.Hash,
-				dep.Hash,
-			),
+		mapping := fmt.Sprintf(
+			"    \"%x\" -> \"%x\";\n",
+			node.Hash,
+			dep.Hash,
 		)
 
-		dep.walkDeps(buf)
+		uniqueDependencies[mapping] = true
+
+		dep.walkDeps()
 	}
 }
 
@@ -79,7 +82,6 @@ func dotFormat(root Node) *bytes.Buffer {
 	buf := bytes.NewBuffer([]byte{})
 
 	buf.WriteString("digraph {\n")
-	// buf.WriteString("    size=\"11,6!\";\n")
 	buf.WriteString("    pad=.25;\n")
 	buf.WriteString("    ratio=\"fill\";\n")
 	buf.WriteString("    dpi=360;\n")
@@ -96,7 +98,11 @@ func dotFormat(root Node) *bytes.Buffer {
 		)
 	}
 
-	root.walkDeps(buf)
+	root.walkDeps()
+
+	for depMapping := range uniqueDependencies {
+		buf.WriteString(depMapping)
+	}
 
 	buf.WriteString("}\n")
 

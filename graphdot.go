@@ -22,6 +22,9 @@ var (
 )
 
 func (node *Node) findDeps(ctx *build.Context, pwd string) {
+	if node.Name == "C" {
+		return
+	}
 	pkg, err := ctx.Import(node.Name, pwd, build.ImportComment)
 	if err != nil {
 		log.SetOutput(os.Stderr)

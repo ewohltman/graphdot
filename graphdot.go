@@ -64,7 +64,7 @@ func (node *Node) findDependencies(ctx *build.Context, pwd string) {
 	}
 }
 
-func dotFormat(root Node) *bytes.Buffer {
+func dotFormat() *bytes.Buffer {
 	buf := bytes.NewBuffer([]byte{})
 
 	buf.WriteString("digraph {\n")
@@ -124,5 +124,5 @@ func main() {
 
 	root.findDependencies(ctx, pwd)
 
-	log.Print(dotFormat(root).String())
+	log.Print(dotFormat().String())
 }

@@ -27,10 +27,10 @@ func (node *Node) findDependencies(ctx *build.Context, pwd string) {
 
 	pkg, err := ctx.Import(node.Name, pwd, build.ImportComment)
 	if err != nil {
-		err = fmt.Errorf("error importing dependency package: %s", err)
+		err = fmt.Errorf("unable to import dependency package: %s", err)
 
 		log.SetOutput(os.Stderr)
-		log.Fatalf("%+v", err)
+		log.Fatalf("Error: %+v", err)
 	}
 
 	if pkg.Goroot {
@@ -99,20 +99,20 @@ func main() {
 
 	pwd, err := os.Getwd()
 	if err != nil {
-		err = fmt.Errorf("error determining working director: %s", err)
+		err = fmt.Errorf("unable to determine working directory: %s", err)
 
 		log.SetOutput(os.Stderr)
-		log.Fatalf("%+v", err)
+		log.Fatalf("Error: %+v", err)
 	}
 
 	ctx := &build.Default
 
 	project, err := ctx.ImportDir(pwd, build.ImportComment)
 	if err != nil {
-		err = fmt.Errorf("error importing source project: %s", err)
+		err = fmt.Errorf("unable to import source project: %s", err)
 
 		log.SetOutput(os.Stderr)
-		log.Fatalf("%+v", err)
+		log.Fatalf("Error: %+v", err)
 	}
 
 	root := Node{

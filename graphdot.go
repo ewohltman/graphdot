@@ -38,6 +38,8 @@ func (node *Node) findDependencies(ctx *build.Context, pwd string) {
 		return
 	}
 
+	pkgHashes[node.Name] = node.Hash
+
 	if pkg.Imports == nil {
 		return
 	}
@@ -119,8 +121,6 @@ func main() {
 		Name: project.ImportPath,
 		Hash: md5.Sum([]byte(project.Name)),
 	}
-
-	pkgHashes[root.Name] = root.Hash
 
 	root.findDependencies(ctx, pwd)
 

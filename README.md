@@ -1,8 +1,18 @@
 # graphdot
 
-### Visualize Go module dependencies in Graphviz DOT format
+**Visualize Go module dependencies in Graphviz DOT format**
 
 ----
+## Why Fork
+
+This is a fork to implement a feature to configure the graph properties. Tha original
+version has hard coded properties that make generation of e.g. SVG graphics fail,
+i.e. dot will render unusable SVGs.
+
+The idea is to have an option that either supresses the graph proerties completely
+or let's the user specify a file that has custom graph proerties.
+
+The goal is to merge back into the [original project](https://github.com/ewohltman/graphdot).
 
 ## Installation
 Install `graphdot` using go get:

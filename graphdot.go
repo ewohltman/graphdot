@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"crypto/md5"
+	"flag"
 	"fmt"
 	"go/build"
+	"io"
 	"log"
 	"os"
 )
@@ -64,15 +66,36 @@ func (node *Node) findDependencies(ctx *build.Context, pwd string) {
 	}
 }
 
-func dotFormat() *bytes.Buffer {
+func insertGraphProps(wr io.Writer, graphProps string) {
+	if _, err := os.Stat(graphProps); os.IsNotExist(err) {
+		fmt.Fprintf(wr, "    %s;\n", graphProps)
+	} else {
+		rd, err := os.Open(graphProps)
+		if err != nil {
+			log.Fatal("graph props file:", err)
+		}
+		defer rd.Close()
+		_, err = io.Copy(wr, rd)
+		if err != nil {
+			log.Fatal("graph props file:", err)
+		}
+	}
+}
+
+func dotFormat(graphProps string) *bytes.Buffer {
 	buf := bytes.NewBuffer([]byte{})
 
 	buf.WriteString("digraph {\n")
-	buf.WriteString("    pad=.25;\n")
-	buf.WriteString("    ratio=\"fill\";\n")
-	buf.WriteString("    dpi=360;\n")
-	buf.WriteString("    nodesep=.25;\n")
-	buf.WriteString("    node [shape=box];\n")
+	switch {
+	case len(graphProps) == 0:
+		buf.WriteString("    pad=.25;\n")
+		buf.WriteString("    ratio=\"fill\";\n")
+		buf.WriteString("    dpi=360;\n")
+		buf.WriteString("    nodesep=.25;\n")
+		buf.WriteString("    node [shape=box];\n")
+	case graphProps != "-":
+		insertGraphProps(buf, graphProps)
+	}
 
 	for name, hashed := range pkgHashes {
 		buf.WriteString(
@@ -96,6 +119,14 @@ func dotFormat() *bytes.Buffer {
 func main() {
 	log.SetFlags(0)
 	log.SetOutput(os.Stdout)
+
+	flagGraphProps := flag.String("graph-props", "",
+		`Select a file to be inserted as graph properties into the dot output
+file. If not set the standard properties will be inserted. When set to
+'-' no properties will be inserted. If the filename does not exists,
+the value will be inserted as a graph property.`)
+	flag.StringVar(flagGraphProps, "p", "", "Short for -graph-props")
+	flag.Parse()
 
 	pwd, err := os.Getwd()
 	if err != nil {
@@ -124,5 +155,5 @@ func main() {
 
 	root.findDependencies(ctx, pwd)
 
-	log.Print(dotFormat().String())
+	log.Print(dotFormat(*flagGraphProps).String())
 }

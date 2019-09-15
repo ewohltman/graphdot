@@ -1,6 +1,6 @@
 # graphdot
 
-### Visualize Go module dependencies in Graphviz DOT format
+**Visualize Go module dependencies in Graphviz DOT format**
 
 ----
 
@@ -24,6 +24,11 @@ For large graphs with many nodes of dependencies, you may want to generate an
 to zoom in with high-fidelity and save disk space instead:
 
 `graphdot | dot -Gdpi=0 -T svg -o dependency_graph.svg`
+
+If you like a more UML'ish style, you can use the provided graph proerties
+from `uml.gprops`:
+
+`graphdot -graph-props uml.gprops | dot -T svg -o dependency_graph.svg`
 
 ## Contributing
 

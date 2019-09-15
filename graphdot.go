@@ -93,7 +93,7 @@ func dotFormat(graphProps string) *bytes.Buffer {
 		buf.WriteString("    dpi=360;\n")
 		buf.WriteString("    nodesep=.25;\n")
 		buf.WriteString("    node [shape=box];\n")
-	case graphProps != "-":
+	case graphProps != "none":
 		insertGraphProps(buf, graphProps)
 	}
 
@@ -122,8 +122,8 @@ func main() {
 
 	flagGraphProps := flag.String("graph-props", "",
 		`Select a file to be inserted as graph properties into the dot output
-file. If not set the standard properties will be inserted. When set to
-'-' no properties will be inserted. If the filename does not exists,
+file. If not set some default properties will be inserted. When set to
+'none' no properties will be inserted. If the filename does not exists,
 the value will be inserted as a graph property.`)
 	flag.StringVar(flagGraphProps, "p", "", "Short for -graph-props")
 	flag.Parse()

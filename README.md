@@ -3,16 +3,6 @@
 **Visualize Go module dependencies in Graphviz DOT format**
 
 ----
-## Why Fork
-
-This is a fork to implement a feature to configure the graph properties. Tha original
-version has hard coded properties that make generation of e.g. SVG graphics fail,
-i.e. dot will render unusable SVGs.
-
-The idea is to have an option that either supresses the graph proerties completely
-or let's the user specify a file that has custom graph proerties.
-
-The goal is to merge back into the [original project](https://github.com/ewohltman/graphdot).
 
 ## Installation
 Install `graphdot` using go get:
@@ -34,6 +24,11 @@ For large graphs with many nodes of dependencies, you may want to generate an
 to zoom in with high-fidelity and save disk space instead:
 
 `graphdot | dot -Gdpi=0 -T svg -o dependency_graph.svg`
+
+If you like a more UML'ish style, you can use the provided graph proerties
+from `uml.gprops`:
+
+`graphdot -graph-props uml.gprops | dot -T svg -o dependency_graph.svg`
 
 ## Contributing
 

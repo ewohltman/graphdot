@@ -1,0 +1,2 @@
+    node [shape=component, color="#7c5259", style=filled, fillcolor="#fcffd2"];
+    edge [style=dashed, arrowhead=vee, color="#7c5259"];

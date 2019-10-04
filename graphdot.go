@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"crypto/md5"
+	"flag"
 	"fmt"
 	"go/build"
+	"io"
 	"log"
 	"os"
 	"sort"
@@ -144,14 +146,36 @@ func (node *Node) groupPackages() {
 	node.Caller.Dependencies = toKeep
 }
 
-func dotFormat(root *Node) string {
+func insertGraphProps(wr io.Writer, graphProps string) {
+	if _, err := os.Stat(graphProps); os.IsNotExist(err) {
+		fmt.Fprintf(wr, "    %s;\n", graphProps)
+	} else {
+		rd, err := os.Open(graphProps)
+		if err != nil {
+			log.Fatal("graph props file:", err)
+		}
+		defer rd.Close()
+		_, err = io.Copy(wr, rd)
+		if err != nil {
+			log.Fatal("graph props file:", err)
+		}
+	}
+}
+
+func dotFormat(root *Node, graphProps string) string {
 	buf := bytes.NewBuffer([]byte{})
 
 	buf.WriteString("digraph {\n")
-	buf.WriteString("    pad=.25;\n")
-	buf.WriteString("    ratio=\"fill\";\n")
-	buf.WriteString("    nodesep=.25;\n")
-	buf.WriteString("    node [shape=box];\n")
+	switch {
+	case len(graphProps) == 0:
+		buf.WriteString("    pad=.25;\n")
+		buf.WriteString("    ratio=\"fill\";\n")
+		buf.WriteString("    dpi=360;\n")
+		buf.WriteString("    nodesep=.25;\n")
+		buf.WriteString("    node [shape=box];\n")
+	case graphProps != "none":
+		insertGraphProps(buf, graphProps)
+	}
 
 	tokens := dotSort(strings.Split(root.dotFormat(), "\n"))
 
@@ -204,6 +228,14 @@ func main() {
 	log.SetFlags(0)
 	log.SetOutput(os.Stdout)
 
+	flagGraphProps := flag.String("graph-props", "",
+		`Select a file to be inserted as graph properties into the dot output
+file. If not set some default properties will be inserted. When set to
+'none' no properties will be inserted. If the filename does not exists,
+the value will be inserted as a graph property.`)
+	flag.StringVar(flagGraphProps, "p", "", "Short for -graph-props")
+	flag.Parse()
+
 	pwd, err := os.Getwd()
 	if err != nil {
 		err = fmt.Errorf("unable to determine working directory: %s", err)
@@ -230,5 +262,5 @@ func main() {
 	root.findDependencies(ctx, pwd)
 	root.groupPackages()
 
-	log.Print(dotFormat(root))
+	log.Print(dotFormat(*flagGraphProps).String())
 }

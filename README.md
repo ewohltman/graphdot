@@ -25,15 +25,20 @@ to zoom in with high-fidelity and save disk space instead:
 
 `graphdot | dot -Gdpi=0 -T svg -o dependency_graph.svg`
 
-If you like a more UML'ish style, you can use the provided graph proerties
+If you like a more UML'ish style, you can use the provided graph properties
 from `uml.gprops`:
 
 `graphdot -graph-props uml.gprops | dot -T svg -o dependency_graph.svg`
 
-## Contributing
+## Example
 
-Contributions are very welcome, however please follow the below guidelines.
+![graphdot](https://raw.githubusercontent.com/ewohltman/graphdot/master/dependency_graph.png)
+
+## Contributing to the project
+
+Contributions are very welcome, however please follow the guidelines below:
 
 * Open an issue describing the bug or enhancement
 * Fork the `develop` branch and make your changes
+  * Try to match current naming conventions as closely as possible
 * Create a Pull Request with your changes against the `develop` branch

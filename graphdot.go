@@ -9,8 +9,20 @@ import (
 	"io"
 	"log"
 	"os"
-	"sort"
 	"strings"
+
+	"github.com/awalterschulze/gographviz"
+	"github.com/awalterschulze/gographviz/ast"
+)
+
+const (
+	usageP          = "Short for -graph-props"
+	usageGraphProps = `
+Select a file to be inserted as graph properties into the dot output file. If
+not set some default properties will be inserted. When set to 'none' no
+properties will be inserted. If the filename does not exists, the value will be
+inserted as a graph property.
+`
 )
 
 type Node struct {
@@ -19,51 +31,6 @@ type Node struct {
 	GoRoot       bool     `json:"-"`
 	Caller       *Node    `json:"caller"`
 	Dependencies []*Node  `json:"dependencies"`
-}
-
-func (node *Node) String() string {
-	if node.Dependencies == nil {
-		return ""
-	}
-
-	buf := bytes.NewBuffer([]byte{})
-
-	for _, dependency := range node.Dependencies {
-		buf.WriteString(node.Name + " -> " + dependency.Name + "\n")
-		buf.WriteString(dependency.String())
-	}
-
-	return buf.String()
-}
-
-func (node *Node) dotFormat() string {
-	buf := bytes.NewBuffer([]byte{})
-
-	buf.WriteString(
-		fmt.Sprintf(
-			"    \"%x\" [label=\"%s\"];\n",
-			node.Hash,
-			node.Name,
-		),
-	)
-
-	if node.Dependencies == nil {
-		return buf.String()
-	}
-
-	for _, dependency := range node.Dependencies {
-		buf.WriteString(
-			fmt.Sprintf(
-				"    \"%x\" -> \"%x\";\n",
-				node.Hash,
-				dependency.Hash,
-			),
-		)
-
-		buf.WriteString(dependency.dotFormat())
-	}
-
-	return buf.String()
 }
 
 func (node *Node) findDependencies(ctx *build.Context, pwd string) {
@@ -146,112 +113,142 @@ func (node *Node) groupPackages() {
 	node.Caller.Dependencies = toKeep
 }
 
-func insertGraphProps(wr io.Writer, graphProps string) {
-	if _, err := os.Stat(graphProps); os.IsNotExist(err) {
-		fmt.Fprintf(wr, "    %s;\n", graphProps)
-	} else {
-		rd, err := os.Open(graphProps)
-		if err != nil {
-			log.Fatal("graph props file:", err)
+func (node *Node) buildGraph(graph *gographviz.Graph) error {
+	nodeHash := fmt.Sprintf(`"%x"`, node.Hash)
+
+	if !graph.IsNode(nodeHash) {
+		nodeProperties := map[string]string{
+			"label":    fmt.Sprintf(`"%s"`, node.Name),
+			"fontname": "helvetica",
+			"shape":    "box",
 		}
-		defer rd.Close()
-		_, err = io.Copy(wr, rd)
+
+		err := graph.AddNode("dependencies", nodeHash, nodeProperties)
 		if err != nil {
-			log.Fatal("graph props file:", err)
+			return err
 		}
 	}
+
+	for _, dependency := range node.Dependencies {
+		dependencyHash := fmt.Sprintf(`"%x"`, dependency.Hash)
+
+		if !graph.IsNode(dependencyHash) {
+			dependencyProperties := map[string]string{
+				"label":    fmt.Sprintf(`"%s"`, dependency.Name),
+				"fontname": "helvetica",
+				"shape":    "box",
+			}
+
+			err := graph.AddNode("dependencies", dependencyHash, dependencyProperties)
+			if err != nil {
+				return err
+			}
+		}
+
+		err := graph.AddEdge(nodeHash, dependencyHash, true, nil)
+		if err != nil {
+			return err
+		}
+
+		err = dependency.buildGraph(graph)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
-func dotFormat(root *Node, graphProps string) string {
+func buildGraphAST(graphPropsFilePath string) (*ast.Graph, error) {
 	buf := bytes.NewBuffer([]byte{})
 
-	buf.WriteString("digraph {\n")
+	buf.WriteString("digraph dependencies {\n")
+
 	switch {
-	case len(graphProps) == 0:
+	case len(graphPropsFilePath) == 0:
 		buf.WriteString("    pad=.25;\n")
-		buf.WriteString("    ratio=\"fill\";\n")
+		buf.WriteString("    ratio=fill;\n")
 		buf.WriteString("    dpi=360;\n")
 		buf.WriteString("    nodesep=.25;\n")
-		buf.WriteString("    node [shape=box];\n")
-	case graphProps != "none":
-		insertGraphProps(buf, graphProps)
+		buf.WriteString("    node [shape=box fontname=helvetica];\n")
+	case graphPropsFilePath != "none":
+		err := insertGraphProps(buf, graphPropsFilePath)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	tokens := dotSort(strings.Split(root.dotFormat(), "\n"))
+	buf.WriteString("}")
 
-	buf.WriteString(strings.Join(tokens, "\n") + "\n")
+	graphAst, err := gographviz.ParseString(buf.String())
+	if err != nil {
+		return nil, err
+	}
 
-	buf.WriteString("}\n")
-
-	return buf.String()
+	return graphAst, nil
 }
 
-func dotSort(tokens []string) []string {
-	uniqueTokens := make(map[string]bool)
+func insertGraphProps(writer io.Writer, graphPropsFilePath string) (err error) {
+	_, err = os.Stat(graphPropsFilePath)
+	if os.IsNotExist(err) {
+		err = fmt.Errorf("%s file does not exist", graphPropsFilePath)
+		return
+	}
 
-	for _, token := range tokens {
-		if token == "" {
-			continue
+	var graphPropsFile *os.File
+
+	graphPropsFile, err = os.Open(graphPropsFilePath)
+	if err != nil {
+		return
+	}
+
+	defer func() {
+		err = graphPropsFile.Close()
+		if err != nil {
+			return
 		}
+	}()
 
-		uniqueTokens[token] = true
-	}
+	_, err = io.Copy(writer, graphPropsFile)
 
-	labels := make([]string, 0)
-	mappings := make([]string, 0)
-
-	for uniqueToken := range uniqueTokens {
-		if strings.Contains(uniqueToken, "label=") {
-			labels = append(labels, uniqueToken)
-		} else {
-			mappings = append(mappings, uniqueToken)
-		}
-	}
-
-	sort.Strings(labels)
-	sort.Strings(mappings)
-
-	sortedTokens := make([]string, 0)
-
-	for _, label := range labels {
-		sortedTokens = append(sortedTokens, label)
-	}
-
-	for _, mapping := range mappings {
-		sortedTokens = append(sortedTokens, mapping)
-	}
-
-	return sortedTokens
+	return
 }
 
 func main() {
-	log.SetFlags(0)
-	log.SetOutput(os.Stdout)
+	var graphPropsFilePath string
 
-	flagGraphProps := flag.String("graph-props", "",
-		`Select a file to be inserted as graph properties into the dot output
-file. If not set some default properties will be inserted. When set to
-'none' no properties will be inserted. If the filename does not exists,
-the value will be inserted as a graph property.`)
-	flag.StringVar(flagGraphProps, "p", "", "Short for -graph-props")
+	flag.StringVar(&graphPropsFilePath, "p", "", usageP)
+	flag.StringVar(&graphPropsFilePath, "graph-props", "", strings.TrimSpace(usageGraphProps))
 	flag.Parse()
+
+	log.SetFlags(0)
+
+	graphAst, err := buildGraphAST(graphPropsFilePath)
+	if err != nil {
+		log.Fatalf("Error: %s", err)
+	}
+
+	graph := gographviz.NewGraph()
+
+	err = gographviz.Analyse(graphAst, graph)
+	if err != nil {
+		log.Fatalf("Error: %s", err)
+	}
 
 	pwd, err := os.Getwd()
 	if err != nil {
-		err = fmt.Errorf("unable to determine working directory: %s", err)
+		err = fmt.Errorf("unable to determine working directory: %w", err)
 
-		log.SetOutput(os.Stderr)
-		log.Fatalf("Error: %+v", err)
+		log.Fatalf("Error: %s", err)
 	}
 
 	ctx := &build.Default
 
 	project, err := ctx.ImportDir(pwd, build.ImportComment)
 	if err != nil {
-		err = fmt.Errorf("unable to import source project: %s", err)
+		err = fmt.Errorf("unable to import source project: %w", err)
 
-		log.SetOutput(os.Stderr)
-		log.Fatalf("Error: %+v", err)
+		log.Fatalf("Error: %s", err)
 	}
 
 	root := &Node{
@@ -260,7 +257,15 @@ the value will be inserted as a graph property.`)
 	}
 
 	root.findDependencies(ctx, pwd)
+
 	root.groupPackages()
 
-	log.Print(dotFormat(*flagGraphProps).String())
+	err = root.buildGraph(graph)
+	if err != nil {
+		err = fmt.Errorf("unable to build dependency graph: %w", err)
+
+		log.Fatalf("Error: %s", err)
+	}
+
+	fmt.Println(graph)
 }

@@ -162,7 +162,7 @@ func (node *Node) buildGraph(graph *gographviz.Graph) error {
 func buildGraphAST(graphPropsFilePath string) (*ast.Graph, error) {
 	buf := bytes.NewBuffer([]byte{})
 
-	buf.WriteString("digraph dependencies {\n")
+	buf.WriteString("strict digraph dependencies {\n")
 
 	switch {
 	case len(graphPropsFilePath) == 0:

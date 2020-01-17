@@ -40,7 +40,7 @@ func (node *Node) findDependencies(ctx *build.Context, pwd string) error {
 
 	pkg, err := ctx.Import(node.Name, pwd, build.ImportComment)
 	if err != nil {
-		return err
+		return fmt.Errorf("unable to import dependency package: %w", err)
 	}
 
 	if pkg.Goroot {
@@ -148,7 +148,7 @@ func (node *Node) buildGraph(graph *gographviz.Graph) error {
 
 		err := graph.AddNode("dependencies", nodeHash, nodeProperties)
 		if err != nil {
-			return err
+			return fmt.Errorf("unable to add graph node: %w", err)
 		}
 	}
 
@@ -164,13 +164,13 @@ func (node *Node) buildGraph(graph *gographviz.Graph) error {
 
 			err := graph.AddNode("dependencies", dependencyHash, dependencyProperties)
 			if err != nil {
-				return err
+				return fmt.Errorf("unable to add graph node: %w", err)
 			}
 		}
 
 		err := graph.AddEdge(nodeHash, dependencyHash, true, nil)
 		if err != nil {
-			return err
+			return fmt.Errorf("unable to add graph edge: %w", err)
 		}
 
 		err = dependency.buildGraph(graph)

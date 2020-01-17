@@ -2,7 +2,7 @@ package main
 
 import (
 	"bytes"
-	"crypto/md5"
+	"crypto/sha256"
 	"flag"
 	"fmt"
 	"go/build"
@@ -27,47 +27,70 @@ inserted as a graph property.
 
 type Node struct {
 	Name         string   `json:"name"`
-	Hash         [16]byte `json:"hash"`
+	Hash         [32]byte `json:"hash"`
 	GoRoot       bool     `json:"-"`
 	Caller       *Node    `json:"caller"`
 	Dependencies []*Node  `json:"dependencies"`
 }
 
-func (node *Node) findDependencies(ctx *build.Context, pwd string) {
+func (node *Node) findDependencies(ctx *build.Context, pwd string) error {
 	if node.Name == "C" {
-		return
+		return nil
 	}
 
 	pkg, err := ctx.Import(node.Name, pwd, build.ImportComment)
 	if err != nil {
-		err = fmt.Errorf("unable to import dependency package: %s", err)
-
-		log.SetOutput(os.Stderr)
-		log.Fatalf("Error: %+v", err)
+		return fmt.Errorf("unable to import dependency package: %w", err)
 	}
 
 	if pkg.Goroot {
 		node.GoRoot = true
-		return
+		return nil
 	}
 
 	if pkg.Imports == nil {
-		return
+		return nil
 	}
 
 	for _, importPath := range pkg.Imports {
 		dependency := &Node{
 			Name:   importPath,
-			Hash:   md5.Sum([]byte(importPath)),
+			Hash:   sha256.Sum256([]byte(importPath)),
 			Caller: node,
 		}
 
-		dependency.findDependencies(ctx, pwd)
+		err = dependency.findDependencies(ctx, pwd)
+		if err != nil {
+			return err
+		}
 
 		if !dependency.GoRoot {
 			node.Dependencies = append(node.Dependencies, dependency)
 		}
 	}
+
+	if pkg.TestImports == nil {
+		return nil
+	}
+
+	for _, testImportPath := range pkg.TestImports {
+		dependency := &Node{
+			Name:   testImportPath,
+			Hash:   sha256.Sum256([]byte(testImportPath)),
+			Caller: node,
+		}
+
+		err = dependency.findDependencies(ctx, pwd)
+		if err != nil {
+			return err
+		}
+
+		if !dependency.GoRoot {
+			node.Dependencies = append(node.Dependencies, dependency)
+		}
+	}
+
+	return nil
 }
 
 func (node *Node) groupPackages() {
@@ -106,9 +129,7 @@ func (node *Node) groupPackages() {
 		}
 	}
 
-	for _, nodeDependency := range node.Dependencies {
-		toKeep = append(toKeep, nodeDependency)
-	}
+	toKeep = append(toKeep, node.Dependencies...)
 
 	node.Caller.Dependencies = toKeep
 }
@@ -125,7 +146,7 @@ func (node *Node) buildGraph(graph *gographviz.Graph) error {
 
 		err := graph.AddNode("dependencies", nodeHash, nodeProperties)
 		if err != nil {
-			return err
+			return fmt.Errorf("unable to add graph node: %w", err)
 		}
 	}
 
@@ -141,13 +162,13 @@ func (node *Node) buildGraph(graph *gographviz.Graph) error {
 
 			err := graph.AddNode("dependencies", dependencyHash, dependencyProperties)
 			if err != nil {
-				return err
+				return fmt.Errorf("unable to add graph node: %w", err)
 			}
 		}
 
 		err := graph.AddEdge(nodeHash, dependencyHash, true, nil)
 		if err != nil {
-			return err
+			return fmt.Errorf("unable to add graph edge: %w", err)
 		}
 
 		err = dependency.buildGraph(graph)
@@ -162,10 +183,10 @@ func (node *Node) buildGraph(graph *gographviz.Graph) error {
 func buildGraphAST(graphPropsFilePath string) (*ast.Graph, error) {
 	buf := bytes.NewBuffer([]byte{})
 
-	buf.WriteString("digraph dependencies {\n")
+	buf.WriteString("strict digraph dependencies {\n")
 
 	switch {
-	case len(graphPropsFilePath) == 0:
+	case graphPropsFilePath == "":
 		buf.WriteString("    pad=.25;\n")
 		buf.WriteString("    ratio=fill;\n")
 		buf.WriteString("    dpi=360;\n")
@@ -215,13 +236,19 @@ func insertGraphProps(writer io.Writer, graphPropsFilePath string) (err error) {
 }
 
 func main() {
+	log.SetFlags(0)
+
 	var graphPropsFilePath string
 
 	flag.StringVar(&graphPropsFilePath, "p", "", usageP)
 	flag.StringVar(&graphPropsFilePath, "graph-props", "", strings.TrimSpace(usageGraphProps))
 	flag.Parse()
 
-	log.SetFlags(0)
+	targetDirectories := flag.Args()
+
+	if len(targetDirectories) > 1 {
+		log.Fatalf("Error: more than one directory provided to be recursively evaluated")
+	}
 
 	graphAst, err := buildGraphAST(graphPropsFilePath)
 	if err != nil {
@@ -235,36 +262,39 @@ func main() {
 		log.Fatalf("Error: %s", err)
 	}
 
-	pwd, err := os.Getwd()
-	if err != nil {
-		err = fmt.Errorf("unable to determine working directory: %w", err)
+	if len(targetDirectories) == 0 || targetDirectories[0] == "." {
+		pwd, err := os.Getwd()
+		if err != nil {
+			log.Fatalf("Error: unable to determine working directory: %s", err)
+		}
 
-		log.Fatalf("Error: %s", err)
+		targetDirectories = append(targetDirectories, pwd)
 	}
 
-	ctx := &build.Default
+	for _, targetDirectory := range targetDirectories {
+		ctx := &build.Default
 
-	project, err := ctx.ImportDir(pwd, build.ImportComment)
-	if err != nil {
-		err = fmt.Errorf("unable to import source project: %w", err)
+		project, err := ctx.ImportDir(targetDirectory, build.ImportComment)
+		if err != nil {
+			log.Fatalf("Error: unable to import source project: %s", err)
+		}
 
-		log.Fatalf("Error: %s", err)
-	}
+		root := &Node{
+			Name: project.ImportPath,
+			Hash: sha256.Sum256([]byte(project.Name)),
+		}
 
-	root := &Node{
-		Name: project.ImportPath,
-		Hash: md5.Sum([]byte(project.Name)),
-	}
+		err = root.findDependencies(ctx, targetDirectory)
+		if err != nil {
+			log.Fatalf("Error: %s", err)
+		}
 
-	root.findDependencies(ctx, pwd)
+		root.groupPackages()
 
-	root.groupPackages()
-
-	err = root.buildGraph(graph)
-	if err != nil {
-		err = fmt.Errorf("unable to build dependency graph: %w", err)
-
-		log.Fatalf("Error: %s", err)
+		err = root.buildGraph(graph)
+		if err != nil {
+			log.Fatalf("Error: unable to build dependency graph: %s", err)
+		}
 	}
 
 	fmt.Println(graph)

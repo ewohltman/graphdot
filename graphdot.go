@@ -2,7 +2,7 @@ package main
 
 import (
 	"bytes"
-	"crypto/md5"
+	"crypto/sha256"
 	"flag"
 	"fmt"
 	"go/build"
@@ -27,7 +27,7 @@ inserted as a graph property.
 
 type Node struct {
 	Name         string   `json:"name"`
-	Hash         [16]byte `json:"hash"`
+	Hash         [32]byte `json:"hash"`
 	GoRoot       bool     `json:"-"`
 	Caller       *Node    `json:"caller"`
 	Dependencies []*Node  `json:"dependencies"`
@@ -55,7 +55,7 @@ func (node *Node) findDependencies(ctx *build.Context, pwd string) error {
 	for _, importPath := range pkg.Imports {
 		dependency := &Node{
 			Name:   importPath,
-			Hash:   md5.Sum([]byte(importPath)),
+			Hash:   sha256.Sum256([]byte(importPath)),
 			Caller: node,
 		}
 
@@ -76,7 +76,7 @@ func (node *Node) findDependencies(ctx *build.Context, pwd string) error {
 	for _, testImportPath := range pkg.TestImports {
 		dependency := &Node{
 			Name:   testImportPath,
-			Hash:   md5.Sum([]byte(testImportPath)),
+			Hash:   sha256.Sum256([]byte(testImportPath)),
 			Caller: node,
 		}
 
@@ -129,9 +129,7 @@ func (node *Node) groupPackages() {
 		}
 	}
 
-	for _, nodeDependency := range node.Dependencies {
-		toKeep = append(toKeep, nodeDependency)
-	}
+	toKeep = append(toKeep, node.Dependencies...)
 
 	node.Caller.Dependencies = toKeep
 }
@@ -188,7 +186,7 @@ func buildGraphAST(graphPropsFilePath string) (*ast.Graph, error) {
 	buf.WriteString("strict digraph dependencies {\n")
 
 	switch {
-	case len(graphPropsFilePath) == 0:
+	case graphPropsFilePath == "":
 		buf.WriteString("    pad=.25;\n")
 		buf.WriteString("    ratio=fill;\n")
 		buf.WriteString("    dpi=360;\n")
@@ -283,7 +281,7 @@ func main() {
 
 		root := &Node{
 			Name: project.ImportPath,
-			Hash: md5.Sum([]byte(project.Name)),
+			Hash: sha256.Sum256([]byte(project.Name)),
 		}
 
 		err = root.findDependencies(ctx, targetDirectory)

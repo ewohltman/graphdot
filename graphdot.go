@@ -236,8 +236,6 @@ func insertGraphProps(writer io.Writer, graphPropsFilePath string) (err error) {
 }
 
 func main() {
-	log.SetFlags(0)
-
 	var graphPropsFilePath string
 
 	flag.StringVar(&graphPropsFilePath, "p", "", usageP)
@@ -245,6 +243,8 @@ func main() {
 	flag.Parse()
 
 	commandArgs := flag.Args()
+
+	log.SetFlags(0)
 
 	if len(commandArgs) > 1 {
 		log.Fatalf("Error: more than one directory provided to be recursively evaluated")

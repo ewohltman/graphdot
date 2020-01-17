@@ -33,26 +33,23 @@ type Node struct {
 	Dependencies []*Node  `json:"dependencies"`
 }
 
-func (node *Node) findDependencies(ctx *build.Context, pwd string) {
+func (node *Node) findDependencies(ctx *build.Context, pwd string) error {
 	if node.Name == "C" {
-		return
+		return nil
 	}
 
 	pkg, err := ctx.Import(node.Name, pwd, build.ImportComment)
 	if err != nil {
-		err = fmt.Errorf("unable to import dependency package: %s", err)
-
-		log.SetOutput(os.Stderr)
-		log.Fatalf("Error: %+v", err)
+		return err
 	}
 
 	if pkg.Goroot {
 		node.GoRoot = true
-		return
+		return nil
 	}
 
 	if pkg.Imports == nil {
-		return
+		return nil
 	}
 
 	for _, importPath := range pkg.Imports {
@@ -62,12 +59,38 @@ func (node *Node) findDependencies(ctx *build.Context, pwd string) {
 			Caller: node,
 		}
 
-		dependency.findDependencies(ctx, pwd)
+		err = dependency.findDependencies(ctx, pwd)
+		if err != nil {
+			return err
+		}
 
 		if !dependency.GoRoot {
 			node.Dependencies = append(node.Dependencies, dependency)
 		}
 	}
+
+	if pkg.TestImports == nil {
+		return nil
+	}
+
+	for _, testImportPath := range pkg.TestImports {
+		dependency := &Node{
+			Name:   testImportPath,
+			Hash:   md5.Sum([]byte(testImportPath)),
+			Caller: node,
+		}
+
+		err = dependency.findDependencies(ctx, pwd)
+		if err != nil {
+			return err
+		}
+
+		if !dependency.GoRoot {
+			node.Dependencies = append(node.Dependencies, dependency)
+		}
+	}
+
+	return nil
 }
 
 func (node *Node) groupPackages() {
@@ -215,13 +238,19 @@ func insertGraphProps(writer io.Writer, graphPropsFilePath string) (err error) {
 }
 
 func main() {
+	log.SetFlags(0)
+
 	var graphPropsFilePath string
 
 	flag.StringVar(&graphPropsFilePath, "p", "", usageP)
 	flag.StringVar(&graphPropsFilePath, "graph-props", "", strings.TrimSpace(usageGraphProps))
 	flag.Parse()
 
-	log.SetFlags(0)
+	targetDirectories := flag.Args()
+
+	if len(targetDirectories) > 1 {
+		log.Fatalf("Error: more than one directory provided to be recursively evaluated")
+	}
 
 	graphAst, err := buildGraphAST(graphPropsFilePath)
 	if err != nil {
@@ -235,36 +264,39 @@ func main() {
 		log.Fatalf("Error: %s", err)
 	}
 
-	pwd, err := os.Getwd()
-	if err != nil {
-		err = fmt.Errorf("unable to determine working directory: %w", err)
+	if len(targetDirectories) == 0 || targetDirectories[0] == "." {
+		pwd, err := os.Getwd()
+		if err != nil {
+			log.Fatalf("Error: unable to determine working directory: %s", err)
+		}
 
-		log.Fatalf("Error: %s", err)
+		targetDirectories = append(targetDirectories, pwd)
 	}
 
-	ctx := &build.Default
+	for _, targetDirectory := range targetDirectories {
+		ctx := &build.Default
 
-	project, err := ctx.ImportDir(pwd, build.ImportComment)
-	if err != nil {
-		err = fmt.Errorf("unable to import source project: %w", err)
+		project, err := ctx.ImportDir(targetDirectory, build.ImportComment)
+		if err != nil {
+			log.Fatalf("Error: unable to import source project: %s", err)
+		}
 
-		log.Fatalf("Error: %s", err)
-	}
+		root := &Node{
+			Name: project.ImportPath,
+			Hash: md5.Sum([]byte(project.Name)),
+		}
 
-	root := &Node{
-		Name: project.ImportPath,
-		Hash: md5.Sum([]byte(project.Name)),
-	}
+		err = root.findDependencies(ctx, targetDirectory)
+		if err != nil {
+			log.Fatalf("Error: %s", err)
+		}
 
-	root.findDependencies(ctx, pwd)
+		root.groupPackages()
 
-	root.groupPackages()
-
-	err = root.buildGraph(graph)
-	if err != nil {
-		err = fmt.Errorf("unable to build dependency graph: %w", err)
-
-		log.Fatalf("Error: %s", err)
+		err = root.buildGraph(graph)
+		if err != nil {
+			log.Fatalf("Error: unable to build dependency graph: %s", err)
+		}
 	}
 
 	fmt.Println(graph)

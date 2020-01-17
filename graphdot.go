@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/awalterschulze/gographviz"
@@ -38,7 +39,7 @@ func (node *Node) findDependencies(ctx *build.Context, pwd string) error {
 		return nil
 	}
 
-	pkg, err := ctx.Import(node.Name, pwd, build.ImportComment)
+	pkg, err := ctx.Import(node.Name, pwd, 0)
 	if err != nil {
 		return fmt.Errorf("unable to import dependency package: %w", err)
 	}
@@ -236,18 +237,36 @@ func insertGraphProps(writer io.Writer, graphPropsFilePath string) (err error) {
 }
 
 func main() {
-	log.SetFlags(0)
-
 	var graphPropsFilePath string
 
 	flag.StringVar(&graphPropsFilePath, "p", "", usageP)
 	flag.StringVar(&graphPropsFilePath, "graph-props", "", strings.TrimSpace(usageGraphProps))
 	flag.Parse()
 
-	targetDirectories := flag.Args()
+	commandArgs := flag.Args()
 
-	if len(targetDirectories) > 1 {
+	log.SetFlags(0)
+
+	if len(commandArgs) > 1 {
 		log.Fatalf("Error: more than one directory provided to be recursively evaluated")
+	}
+
+	var projectPath string
+
+	if len(commandArgs) == 0 || commandArgs[0] == "." {
+		pwd, err := os.Getwd()
+		if err != nil {
+			log.Fatalf("Error: unable to determine working directory: %s", err)
+		}
+
+		projectPath = pwd
+	} else {
+		var err error
+
+		projectPath, err = filepath.Abs(commandArgs[0])
+		if err != nil {
+			log.Fatalf("Error: unable to resolve absolute directory path: %s", err)
+		}
 	}
 
 	graphAst, err := buildGraphAST(graphPropsFilePath)
@@ -262,39 +281,28 @@ func main() {
 		log.Fatalf("Error: %s", err)
 	}
 
-	if len(targetDirectories) == 0 || targetDirectories[0] == "." {
-		pwd, err := os.Getwd()
-		if err != nil {
-			log.Fatalf("Error: unable to determine working directory: %s", err)
-		}
+	ctx := &build.Default
 
-		targetDirectories = append(targetDirectories, pwd)
+	project, err := ctx.ImportDir(projectPath, 0)
+	if err != nil {
+		log.Fatalf("Error: unable to import source project: %s", err)
 	}
 
-	for _, targetDirectory := range targetDirectories {
-		ctx := &build.Default
+	root := &Node{
+		Name: project.ImportPath,
+		Hash: sha256.Sum256([]byte(project.Name)),
+	}
 
-		project, err := ctx.ImportDir(targetDirectory, build.ImportComment)
-		if err != nil {
-			log.Fatalf("Error: unable to import source project: %s", err)
-		}
+	err = root.findDependencies(ctx, projectPath)
+	if err != nil {
+		log.Fatalf("Error: %s", err)
+	}
 
-		root := &Node{
-			Name: project.ImportPath,
-			Hash: sha256.Sum256([]byte(project.Name)),
-		}
+	root.groupPackages()
 
-		err = root.findDependencies(ctx, targetDirectory)
-		if err != nil {
-			log.Fatalf("Error: %s", err)
-		}
-
-		root.groupPackages()
-
-		err = root.buildGraph(graph)
-		if err != nil {
-			log.Fatalf("Error: unable to build dependency graph: %s", err)
-		}
+	err = root.buildGraph(graph)
+	if err != nil {
+		log.Fatalf("Error: unable to build dependency graph: %s", err)
 	}
 
 	fmt.Println(graph)

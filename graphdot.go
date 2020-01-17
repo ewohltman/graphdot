@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/awalterschulze/gographviz"
@@ -260,7 +261,12 @@ func main() {
 
 		projectPath = pwd
 	} else {
-		projectPath = commandArgs[0]
+		var err error
+
+		projectPath, err = filepath.Abs(commandArgs[0])
+		if err != nil {
+			log.Fatalf("Error: unable to resolve absolute directory path: %s", err)
+		}
 	}
 
 	graphAst, err := buildGraphAST(graphPropsFilePath)
